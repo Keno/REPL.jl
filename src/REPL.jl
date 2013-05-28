@@ -112,6 +112,8 @@ module REPL
 
     type ReadlineREPL <: AbstractREPL
         t::TextTerminal
+        prompt_color::String
+        input_color::String
         answer_color::String
         consecutive_returns
     end
@@ -319,7 +321,7 @@ module REPL
     end
 
     function run_repl(t::TextTerminal)
-        repl=ReadlineREPL(t,Base.answer_color(),0)
+        repl=ReadlineREPL(t,julia_green,Base.text_colors[:white],Base.answer_color(),0)
         f = open(find_hist_file(),true,true,true,false,false)
         hp = hist_from_file(f)
         repl_channel = RemoteRef()
@@ -329,7 +331,12 @@ module REPL
         print(t,have_color ? Base.banner_color : Base.banner_plain)
         while true
             history_reset_state(hp)
-            buf, ok = Readline.prompt!(t,"julia> ";hist=hp,complete=REPLCompletionProvider(repl),on_enter=s->return_callback(repl,s))
+            buf, ok = Readline.prompt!(t,"julia> ";
+                prompt_color=repl.prompt_color,
+                input_color=repl.input_color,
+                hist=hp,
+                complete=REPLCompletionProvider(repl),
+                on_enter=s->return_callback(repl,s))
             if !ok
                 break
             end
