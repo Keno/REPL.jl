@@ -220,6 +220,75 @@ module REPL
         return ret
     end
 
+    import Readline: HistoryProvider, add_history, history_prev, history_next
+
+    type REPLHistoryProvider <: HistoryProvider
+        history::Array{String,1}
+        history_file
+        cur_idx::Int
+        last_buffer::IOBuffer
+    end
+
+    function hist_from_file(file)
+        hp = REPLHistoryProvider(String[],file,0,IOBuffer())
+        seek(file,0)
+        while !eof(file)
+            b = readuntil(file,'\0')
+            push!(hp.history,b[1:(end-1)]) # Strip trailing \0
+        end
+        seekend(file)
+        hp
+    end
+
+
+    function add_history(hist::REPLHistoryProvider,s)
+        # bytestring copies
+        str = bytestring(s.input_buffer.data)
+        push!(hist.history,str)
+        write(hist.history_file,str)
+        write(hist.history_file,'\0')
+        flush(hist.history_file)
+    end
+
+    function history_adjust(hist::REPLHistoryProvider,s)
+        if 0 < hist.cur_idx <= length(hist.history)
+            hist.history[hist.cur_idx] = bytestring(pointer(s.input_buffer.data),s.input_buffer.ptr-1)
+        end
+    end
+
+    function history_prev(hist::REPLHistoryProvider,s)
+        if hist.cur_idx > 1
+            if hist.cur_idx == length(hist.history)+1
+                hist.last_buffer = copy(s.input_buffer)
+            else
+                history_adjust(hist,s)
+            end
+            hist.cur_idx-=1
+            return (hist.history[hist.cur_idx],true)
+        else
+            return ("",false)
+        end
+    end
+
+    function history_next(hist::REPLHistoryProvider,s)
+        if hist.cur_idx < length(hist.history)
+            history_adjust(hist,s)
+            hist.cur_idx+=1
+            return (hist.history[hist.cur_idx],true)
+        elseif hist.cur_idx == length(hist.history)
+            hist.cur_idx+=1
+            buf = hist.last_buffer
+            hist.last_buffer = IOBuffer()
+            return (buf,true)
+        else
+            return ("",false)
+        end
+    end
+
+    function history_reset_state(hist::REPLHistoryProvider)
+        hist.cur_idx = length(hist.history)+1
+    end
+
     const julia_green = "\001\033[1m\033[32m\002"
     const color_normal = Base.color_normal
 
@@ -238,27 +307,44 @@ module REPL
         end
     end
 
+    function find_hist_file()
+        if isfile(".julia_history2")
+            return ".julia_history2"
+        elseif haskey(ENV,"JULIA_HISTORY")
+            return ENV["JULIA_HISTORY"]
+        else
+            @windows_only return ENV["AppData"]*"/julia/history2"
+            @unix_only return ENV["HOME"]*"/.julia_history2" 
+        end
+    end
+
     function run_repl(t::TextTerminal)
         repl=ReadlineREPL(t,Base.answer_color(),0)
-        @async begin
-            repl_channel = RemoteRef()
-            response_channel = RemoteRef()
-            start_repl_backend(repl_channel, response_channel)
-            have_color = true
-            print(t,have_color ? Base.banner_color : Base.banner_plain)
-            while true
-                line = takebuf_string(Readline.prompt!(t,"julia> ";complete=REPLCompletionProvider(repl),on_enter=s->return_callback(repl,s)))
-                if !isempty(line)
-                    ast = Base.parse_input_line(line)
-                    if have_color
-                        print(t,color_normal)
-                    end
-                    put(repl_channel, (ast,1))
-                    (val, bt) = take(response_channel)
-                    print_repsonse(repl,val,bt,true,have_color)
+        f = open(find_hist_file(),true,true,true,false,false)
+        hp = hist_from_file(f)
+        repl_channel = RemoteRef()
+        response_channel = RemoteRef()
+        start_repl_backend(repl_channel, response_channel)
+        have_color = true
+        print(t,have_color ? Base.banner_color : Base.banner_plain)
+        while true
+            history_reset_state(hp)
+            buf, ok = Readline.prompt!(t,"julia> ";hist=hp,complete=REPLCompletionProvider(repl),on_enter=s->return_callback(repl,s))
+            if !ok
+                break
+            end
+            line = takebuf_string(buf)
+            if !isempty(line)
+                ast = Base.parse_input_line(line)
+                if have_color
+                    print(t,color_normal)
                 end
+                put(repl_channel, (ast,1))
+                (val, bt) = take(response_channel)
+                print_repsonse(repl,val,bt,true,have_color)
             end
         end
+        close(f)
     end
 
     type BasicREPL <: AbstractREPL
