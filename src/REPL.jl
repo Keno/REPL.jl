@@ -19,7 +19,7 @@ module REPL
                     iserr, lasterr = false, ()
                 else
                     ast = expand(ast)
-                    ans = backend.ans
+                    ans = Base.Meta.quot(backend.ans)
                     eval(Main,:(ans=$(ans)))
                     value = eval(Main,ast)
                     backend.ans = value
@@ -181,12 +181,15 @@ module REPL
                 # Also look in modules we got through `using` 
                 mods = ccall(:jl_module_usings,Any,(Any,),Main)
                 for mod in mods
-                    syms = map(string,names(mod))
+                    ssyms = names(mod)
+                    syms = map!(string,Array(UTF8String,length(ssyms)),ssyms)
                     append!(suggestions,syms[map((x)->beginswith(x,name),syms)])
                 end
-                syms = map(string,names(mod,true,true))
+                ssyms = names(mod,true,true)
+                syms = map!(string,Array(UTF8String,length(ssyms)),ssyms)
             else 
-                syms = map(string,names(mod,true,false))
+                ssyms = names(mod,true,false)
+                syms = map!(string,Array(UTF8String,length(ssyms)),ssyms)
             end
 
             append!(suggestions,syms[map((x)->beginswith(x,name),syms)])
@@ -216,10 +219,14 @@ module REPL
         end
         # prev_pos not prev_pos+1 since prev_pos is at the position past the 
         # last character we want to consider for completion
-        ret = complete_symbol(s.input_buffer.size == 0 ? "" : 
-            bytestring(s.input_buffer.data[(position(s.input_buffer)+1):(prev_pos)]))
+        if s.input_buffer.size == 0 
+            partial = "" 
+        else 
+            partial = bytestring(s.input_buffer.data[(position(s.input_buffer)+1):(prev_pos)])
+        end
+        ret = complete_symbol(partial)
         seek(s.input_buffer,prev_pos)
-        return ret
+        return (ret,partial)
     end
 
     import Readline: HistoryProvider, add_history, history_prev, history_next
@@ -245,7 +252,7 @@ module REPL
 
     function add_history(hist::REPLHistoryProvider,s)
         # bytestring copies
-        str = bytestring(s.input_buffer.data)
+        str = bytestring(pointer(s.input_buffer.data),s.input_buffer.size)
         push!(hist.history,str)
         write(hist.history_file,str)
         write(hist.history_file,'\0')
@@ -285,6 +292,10 @@ module REPL
         else
             return ("",false)
         end
+    end
+
+    function history_search(hist::REPLHistoryProvider,s,dir,search)
+        
     end
 
     function history_reset_state(hist::REPLHistoryProvider)
