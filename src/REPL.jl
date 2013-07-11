@@ -229,7 +229,7 @@ module REPL
         return (ret,partial)
     end
 
-    import Readline: HistoryProvider, add_history, history_prev, history_next
+    import Readline: HistoryProvider, add_history, history_prev, history_next, history_search
 
     type REPLHistoryProvider <: HistoryProvider
         history::Array{String,1}
@@ -253,6 +253,9 @@ module REPL
     function add_history(hist::REPLHistoryProvider,s)
         # bytestring copies
         str = bytestring(pointer(s.input_buffer.data),s.input_buffer.size)
+        if isempty(strip(str)) # Do not add empty strings to the history
+            return
+        end
         push!(hist.history,str)
         write(hist.history_file,str)
         write(hist.history_file,'\0')
@@ -294,8 +297,60 @@ module REPL
         end
     end
 
-    function history_search(hist::REPLHistoryProvider,s,dir,search)
-        
+    function history_search(hist::REPLHistoryProvider,s,query_buffer::IOBuffer,response_buffer::IOBuffer,backwards::Bool=false, skip_current::Bool=false)
+        if !(query_buffer.ptr > 1)
+            #truncate(response_buffer,0)
+            return true
+        end
+
+        # Alright, first try to see if the current match still works
+        searchdata = bytestring(query_buffer.data[1:(query_buffer.ptr-1)])
+        pos = position(response_buffer)
+        if !skip_current && !((response_buffer.size == 0) || (pos+query_buffer.ptr-2 == 0)) && 
+            (response_buffer.size >= (pos+query_buffer.ptr-2)) &&
+            (searchdata == bytestring(response_buffer.data[pos:(pos+query_buffer.ptr-2)]))
+            return true
+        end
+
+        # Start searching
+        # First the current response buffer
+        match = backwards ? 
+                rsearch(bytestring(response_buffer.data[1:response_buffer.size]),searchdata,response_buffer.ptr - 1):
+                response_buffer.ptr + 1 < response_buffer.size ? 
+                search(bytestring(response_buffer.data[1:response_buffer.size]),searchdata,response_buffer.ptr + 1): 0:-1
+
+        #println("\n",match)
+
+        if match != 0:-1
+            seek(response_buffer,first(match))
+            return true
+        end
+
+        # Now search all the other buffers
+        idx = hist.cur_idx
+        found = false
+        while true
+            idx += backwards ? -1 : 1
+            if !(0 < idx <= length(hist.history))
+                break
+            end
+            match = backwards ? rsearch(hist.history[idx],searchdata):
+                                search(hist.history[idx],searchdata);
+            if match != 0:-1
+                found = true
+                truncate(response_buffer,0)
+                write(response_buffer,hist.history[idx])
+                seek(response_buffer,first(match))
+                break
+            end
+        end
+        if found
+            if hist.cur_idx == length(hist.history)+1
+                hist.last_buffer = copy(s.input_buffer)
+            end
+            hist.cur_idx = idx
+        end
+        return found
     end
 
     function history_reset_state(hist::REPLHistoryProvider)
