@@ -118,6 +118,8 @@ module REPL
         consecutive_returns
     end
 
+    ReadlineREPL(t::TextTerminal) =  ReadlineREPL(t,julia_green,Base.text_colors[:white],Base.answer_color(),0)
+
     type REPLCompletionProvider <: CompletionProvider
         r::ReadlineREPL
     end
@@ -386,38 +388,45 @@ module REPL
         end
     end
 
-    function run_repl(t::TextTerminal)
-        repl=ReadlineREPL(t,julia_green,Base.text_colors[:white],Base.answer_color(),0)
+    function run_frontend(repl::ReadlineREPL,repl_channel,response_channel)
         f = open(find_hist_file(),true,true,true,false,false)
-        hp = hist_from_file(f)
+        have_color = true
+        try 
+            hp = hist_from_file(f)
+            print(repl.t,have_color ? Base.banner_color : Base.banner_plain)
+            while true
+                have_color = true
+                history_reset_state(hp)
+                buf, ok = Readline.prompt!(repl.t,"julia> ";
+                    prompt_color=repl.prompt_color,
+                    input_color=repl.input_color,
+                    hist=hp,
+                    complete=REPLCompletionProvider(repl),
+                    on_enter=s->return_callback(repl,s))
+                if !ok
+                    break
+                end
+                line = takebuf_string(buf)
+                if !isempty(line)
+                    ast = Base.parse_input_line(line)
+                    if have_color
+                        print(repl.t,color_normal)
+                    end
+                    put(repl_channel, (ast,1))
+                    (val, bt) = take(response_channel)
+                    print_repsonse(repl,val,bt,true,have_color)
+                end
+            end
+        finally
+            close(f)
+        end
+    end
+
+    function run_repl(t::TextTerminal)
         repl_channel = RemoteRef()
         response_channel = RemoteRef()
         start_repl_backend(repl_channel, response_channel)
-        have_color = true
-        print(t,have_color ? Base.banner_color : Base.banner_plain)
-        while true
-            history_reset_state(hp)
-            buf, ok = Readline.prompt!(t,"julia> ";
-                prompt_color=repl.prompt_color,
-                input_color=repl.input_color,
-                hist=hp,
-                complete=REPLCompletionProvider(repl),
-                on_enter=s->return_callback(repl,s))
-            if !ok
-                break
-            end
-            line = takebuf_string(buf)
-            if !isempty(line)
-                ast = Base.parse_input_line(line)
-                if have_color
-                    print(t,color_normal)
-                end
-                put(repl_channel, (ast,1))
-                (val, bt) = take(response_channel)
-                print_repsonse(repl,val,bt,true,have_color)
-            end
-        end
-        close(f)
+        run_frontend(ReadlineREPL(t),repl_channel,response_channel)
     end
 
     type BasicREPL <: AbstractREPL
@@ -430,6 +439,8 @@ module REPL
         answer_color::String
     end
 
+    StreamREPL(stream::AsyncStream) = StreamREPL(stream,julia_green,Base.text_colors[:white],Base.answer_color())
+
     answer_color(r::ReadlineREPL) = r.answer_color
     answer_color(r::StreamREPL) = r.answer_color
     answer_color(::BasicREPL) = Base.text_colors[:white]
@@ -438,26 +449,32 @@ module REPL
     print_repsonse(r::ReadlineREPL,args...) = print_repsonse(r.t,r, args...)
 
     function run_repl(stream::AsyncStream)
-    repl = StreamREPL(stream,julia_green,Base.text_colors[:white],Base.answer_color())
+    repl = 
     @async begin
         repl_channel = RemoteRef()
         response_channel = RemoteRef()
-        start_repl_backend(repl_channel, response_channel)
+        start_repl_backend(repl_channel,response_channel)
+        StreamREPL_frontend(repl,repl_channel,response_channel)
+    end
+    repl
+    end
+
+    function run_frontend(repl::StreamREPL,repl_channel,response_channel)
         have_color = true
-        print(stream,have_color ? Base.banner_color : Base.banner_plain)
-        while stream.open
+        print(repl.stream,have_color ? Base.banner_color : Base.banner_plain)
+        while repl.stream.open
             if have_color
-                print(stream,repl.prompt_color)
+                print(repl.stream,repl.prompt_color)
             end
-            print(stream,"julia> ")
+            print(repl.stream,"julia> ")
             if have_color
-                print(stream,repl.input_color)
+                print(repl.stream,repl.input_color)
             end
-            line = readline(stream)
+            line = readline(repl.stream)
             if !isempty(line)
                 ast = Base.parse_input_line(line)
                 if have_color
-                    print(stream,color_normal)
+                    print(repl.stream,color_normal)
                 end
                 put(repl_channel, (ast,1))
                 (val, bt) = take(response_channel)
@@ -465,9 +482,7 @@ module REPL
             end
         end
         # Terminate Backend
-        put(repl_channel,(nothing,-1))
-    end
-    repl
+        put(repl_channel,(nothing,-1))    
     end
 
     function start_repl_server(port)
