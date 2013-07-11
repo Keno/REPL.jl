@@ -115,10 +115,12 @@ module REPL
         prompt_color::String
         input_color::String
         answer_color::String
+        shell_color::String
+        in_shell::Bool
         consecutive_returns
     end
 
-    ReadlineREPL(t::TextTerminal) =  ReadlineREPL(t,julia_green,Base.text_colors[:white],Base.answer_color(),0)
+    ReadlineREPL(t::TextTerminal) =  ReadlineREPL(t,julia_green,Base.text_colors[:white],Base.answer_color(),Base.text_colors[:red],false,0)
 
     type REPLCompletionProvider <: CompletionProvider
         r::ReadlineREPL
@@ -388,6 +390,29 @@ module REPL
         end
     end
 
+    function enter_julia_shell(s,repl)
+        s.prompt = "julia-shell> "
+        s.indent = length(s.prompt)
+        s.prompt_color = repl.shell_color
+        repl.in_shell = true
+        Readline.refresh_line(s)
+    end
+
+    function exit_julia_shell(s,repl)
+        s.prompt = "julia> "
+        s.indent = length(s.prompt)
+        s.prompt_color = repl.prompt_color
+        repl.in_shell = false
+        Readline.refresh_line(s)
+    end
+
+    const repl_keymap = {
+        ';' => :( !data.in_shell && s.input_buffer.size == 0 ? enter_julia_shell(s,data) : Readline.edit_insert(s,';') ),
+        '\b' => :( data.in_shell && s.input_buffer.size == 0 ? exit_julia_shell(s,data) : Readline.edit_backspace(s) )
+    }
+
+    @eval @Readline.keymap repl_keymap_func $([repl_keymap, Readline.default_keymap,Readline.escape_defaults])
+
     function run_frontend(repl::ReadlineREPL,repl_channel,response_channel)
         f = open(find_hist_file(),true,true,true,false,false)
         have_color = true
@@ -401,6 +426,8 @@ module REPL
                     prompt_color=repl.prompt_color,
                     input_color=repl.input_color,
                     hist=hp,
+                    keymap_func = repl_keymap_func,
+                    keymap_func_data = repl,
                     complete=REPLCompletionProvider(repl),
                     on_enter=s->return_callback(repl,s))
                 if !ok
@@ -408,7 +435,12 @@ module REPL
                 end
                 line = takebuf_string(buf)
                 if !isempty(line)
-                    ast = Base.parse_input_line(line)
+                    if repl.in_shell
+                        ast = Expr(:call, :(Base.repl_cmd), macroexpand(Expr(:macrocall,symbol("@cmd"),line)))
+                    else
+                        ast = Base.parse_input_line(line)
+                    end
+                    repl.in_shell = false
                     if have_color
                         print(repl.t,color_normal)
                     end
@@ -421,6 +453,8 @@ module REPL
             close(f)
         end
     end
+
+
 
     function run_repl(t::TextTerminal)
         repl_channel = RemoteRef()
