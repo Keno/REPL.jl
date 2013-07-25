@@ -210,6 +210,22 @@ module REPL
         sort(unique(suggestions))
     end
 
+    const non_word_chars = " \t\n\"\\'`@\$><=:;|&{}()[].,+-*/?%^~"
+
+    function completions(string,pos)
+        startpos = pos
+        println(string,startpos:pos)
+        while startpos > 1
+            startpos = prevind(string,startpos)
+            c = string[startpos]
+            if c < 0x80 && contains(non_word_chars,char(c))
+                startpos = nextind(string,startpos)
+            end
+        end
+        println(string,startpos:pos)
+        complete_symbol(string[startpos:pos])
+    end
+
     function completeLine(c::REPLCompletionProvider,s)
         # Find beginning of "A.B.C" expression
         prev_pos = position(s.input_buffer)
@@ -361,7 +377,7 @@ module REPL
         hist.cur_idx = length(hist.history)+1
     end
 
-    const julia_green = "\001\033[1m\033[32m\002"
+    const julia_green = "\033[1m\033[32m"
     const color_normal = Base.color_normal
 
     function return_callback(repl,s)
