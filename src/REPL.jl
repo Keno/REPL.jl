@@ -228,7 +228,7 @@ module REPL
             startpos = prevind(string,startpos)
         end
         println(string[startpos:pos])
-        complete_symbol(string[startpos:pos]), (dotpos+1):pos
+        complete_symbol(string[startpos:pos]), (dotpos+1):pos, string[startpos:pos]
     end
 
     function completeLine(c::REPLCompletionProvider,s)
