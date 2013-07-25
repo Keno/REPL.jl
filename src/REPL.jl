@@ -116,11 +116,13 @@ module REPL
         input_color::String
         answer_color::String
         shell_color::String
+        help_color::String
         in_shell::Bool
+        in_help::Bool
         consecutive_returns
     end
 
-    ReadlineREPL(t::TextTerminal) =  ReadlineREPL(t,julia_green,Base.text_colors[:white],Base.answer_color(),Base.text_colors[:red],false,0)
+    ReadlineREPL(t::TextTerminal) =  ReadlineREPL(t,julia_green,Base.text_colors[:white],Base.answer_color(),Base.text_colors[:red],Base.text_colors[:yellow],false,false,0)
 
     type REPLCompletionProvider <: CompletionProvider
         r::ReadlineREPL
@@ -411,6 +413,15 @@ module REPL
         end
     end
 
+
+    function enter_julia_help(s,repl)
+        s.prompt = "julia-help> "
+        s.indent = length(s.prompt)
+        s.prompt_color = repl.help_color
+        repl.in_help = true
+        Readline.refresh_line(s)
+    end
+
     function enter_julia_shell(s,repl)
         s.prompt = "julia-shell> "
         s.indent = length(s.prompt)
@@ -419,17 +430,23 @@ module REPL
         Readline.refresh_line(s)
     end
 
-    function exit_julia_shell(s,repl)
-        s.prompt = "julia> "
-        s.indent = length(s.prompt)
-        s.prompt_color = repl.prompt_color
-        repl.in_shell = false
-        Readline.refresh_line(s)
+    function special_backspace(s,repl)
+        if (repl.in_shell || repl.in_help) && s.input_buffer.size == 0
+            s.prompt = "julia> "
+            s.indent = length(s.prompt)
+            s.prompt_color = repl.prompt_color
+            repl.in_shell = false
+            repl.in_help = false
+            Readline.refresh_line(s)
+        else
+            Readline.edit_backspace(s) 
+        end
     end
 
     const repl_keymap = {
-        ';' => :( !data.in_shell && s.input_buffer.size == 0 ? enter_julia_shell(s,data) : Readline.edit_insert(s,';') ),
-        '\b' => :( data.in_shell && s.input_buffer.size == 0 ? exit_julia_shell(s,data) : Readline.edit_backspace(s) )
+        ';' => :( !data.in_shell && !data.in_help && s.input_buffer.size == 0 ? enter_julia_shell(s,data) : Readline.edit_insert(s,';') ),
+        '?' => :( !data.in_shell && !data.in_help && s.input_buffer.size == 0 ? enter_julia_help(s,data) : Readline.edit_insert(s,'?') ),
+        '\b' => :(special_backspace(s,data))
     }
 
     @eval @Readline.keymap repl_keymap_func $([repl_keymap, Readline.default_keymap,Readline.escape_defaults])
@@ -458,6 +475,8 @@ module REPL
                 if !isempty(line)
                     if repl.in_shell
                         ast = Expr(:call, :(Base.repl_cmd), macroexpand(Expr(:macrocall,symbol("@cmd"),line)))
+                    elseif repl.in_help
+                        ast = Expr(:call, :(Base.help), line)
                     else
                         ast = Base.parse_input_line(line)
                     end
