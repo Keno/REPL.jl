@@ -214,16 +214,21 @@ module REPL
 
     function completions(string,pos)
         startpos = pos
-        println(string,startpos:pos)
+        dotpos = -1
         while startpos > 1
-            startpos = prevind(string,startpos)
             c = string[startpos]
-            if c < 0x80 && contains(non_word_chars,char(c))
-                startpos = nextind(string,startpos)
+            if c < 0x80 && contains(non_word_chars,char(c)) 
+                if c != '.'
+                    startpos = nextind(string,startpos)
+                    break
+                elseif dotpos == -1
+                    dotpos = startpos
+                end
             end
+            startpos = prevind(string,startpos)
         end
-        println(string,startpos:pos)
-        complete_symbol(string[startpos:pos])
+        println(string[startpos:pos])
+        complete_symbol(string[startpos:pos]), (dotpos+1):pos
     end
 
     function completeLine(c::REPLCompletionProvider,s)
