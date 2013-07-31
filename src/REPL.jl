@@ -216,21 +216,20 @@ module REPL
 
     function completions(string,pos)
         startpos = pos
-        dotpos = -1
+        dotpos = 0
         while startpos > 1
             c = string[startpos]
             if c < 0x80 && contains(non_word_chars,char(c)) 
                 if c != '.'
                     startpos = nextind(string,startpos)
                     break
-                elseif dotpos == -1
+                elseif dotpos == 0
                     dotpos = startpos
                 end
             end
             startpos = prevind(string,startpos)
         end
-        println(string[startpos:pos])
-        complete_symbol(string[startpos:pos]), (dotpos+1):pos, string[startpos:pos]
+        complete_symbol(string[startpos:pos]), (dotpos+1):pos, string[(dotpos+1):pos]
     end
 
     function completeLine(c::REPLCompletionProvider,s)
@@ -481,6 +480,7 @@ module REPL
                         ast = Base.parse_input_line(line)
                     end
                     repl.in_shell = false
+                    repl.in_help = false
                     if have_color
                         print(repl.t,color_normal)
                     end
