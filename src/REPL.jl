@@ -10,6 +10,8 @@ module REPL
         ans
     end
 
+    using Base.Meta
+
     function eval_user_input(ast::ANY, backend)
         iserr, lasterr, bt = false, (), nothing
         while true
@@ -128,6 +130,10 @@ module REPL
         r::ReadlineREPL
     end
 
+    type ShellCompletionProvider <: CompletionProvider
+        r::ReadlineREPL
+    end
+
     function complete_symbol(sym)
         # Find module
         strs = split(sym,".")
@@ -217,7 +223,7 @@ module REPL
     function completions(string,pos)
         startpos = pos
         dotpos = 0
-        while startpos > 1
+        while startpos > 0
             c = string[startpos]
             if c < 0x80 && contains(non_word_chars,char(c)) 
                 if c != '.'
@@ -229,14 +235,19 @@ module REPL
             end
             startpos = prevind(string,startpos)
         end
+        if dotpos == 0
+            dotpos = startpos-1
+        end
         complete_symbol(string[startpos:pos]), (dotpos+1):pos, string[(dotpos+1):pos]
     end
 
     function completeLine(c::REPLCompletionProvider,s)
         # Find beginning of "A.B.C" expression
         prev_pos = position(s.input_buffer)
+        dotpos = 0
         while true
             char_move_word_left(s)
+            dotpos = position(s.input_buffer)
             if position(s.input_buffer) == 0 || (s.input_buffer.data[position(s.input_buffer)]!='.')
                 break
             else 
@@ -252,7 +263,70 @@ module REPL
         end
         ret = complete_symbol(partial)
         seek(s.input_buffer,prev_pos)
-        return (ret,partial)
+        return (ret,bytestring(s.input_buffer.data[(dotpos+1):(prev_pos)]))
+    end
+
+    type ShellCompleteString <: String
+        s::String
+        last_parse::Range1
+        parent::ShellCompleteString
+        ShellCompleteString(s::String,last_parse::Range1) = new(s,last_parse)
+        ShellCompleteString(s::String,last_parse::Range1,parent) = new(s,last_parse,parent)
+    end
+
+    import Base: parse, next, done, getindex, start, rstrip, strip, endof, convert
+    for f in (:next,:done,:getindex,:start,:rstrip,:endof)
+        @eval ($(f))(x::ShellCompleteString,args...) = ($(f))(x.s,args...)
+    end
+
+    convert(::Type{Ptr{Uint8}},s::ShellCompleteString) = convert(Ptr{Uint8},s.s)
+    strip(s::ShellCompleteString) = (s.s = strip(s.s); s)
+
+    function parse(s::ShellCompleteString, pos::Int, greedy::Bool=true, err::Bool=true)
+        ex,retpos = parse(s.s,pos,greedy,false) #Don't throw erors
+        s.last_parse = pos:retpos
+        while isdefined(s,:parent)
+            s.parent.last_parse = 
+            s = s.parent
+        end
+        ex,retpos
+    end
+
+    function completeLine(c::ShellCompletionProvider,s)
+        # First parse everything up to the current position
+        scs = ShellCompleteString(bytestring(s.input_buffer.data[1:position(s.input_buffer)]),0:-1)
+        args = Base.shell_parse(scs,true)
+        # Now look at the last this we parsed
+        arg = args.args[end].args[end]
+        if isa(arg,String)
+            # Treat this as a path (perhaps give a list of comands in the future as well?)
+            dir,name = splitdir(arg)
+            if isempty(dir)
+                files = readdir()
+            else
+                if !isdir(dir)
+                    return ([],0:-1)
+                end
+                files = readdir(dir)
+            end
+            # Filter out files and directories that do not begin with the partial name we were
+            # completiong and append "/" to directories to simplify further completion
+            ret = map(filter(x->beginswith(x,name),files)) do x
+                if !isdir(joinpath(dir,x))
+                    return x
+                else
+                    return x*"/"
+                end
+            end
+            seek(s.input_buffer,position(s.input_buffer)-sizeof(name))
+            return (ret,bytestring(readbytes(s.input_buffer,sizeof(name))))
+        elseif isexpr(arg,:escape) && (isexpr(arg.args[1],:continue) || isexpr(arg.args[1],:error))
+            r = first(scs.last_parse):prevind(scs.last_parse,last(scs.last_parse))
+            partial = scs[r]
+            ret, range, matched = completions(partial,endof(partial))
+            range += first(r)
+            return (ret,matched)
+        end
     end
 
     import Readline: HistoryProvider, add_history, history_prev, history_next, history_search
@@ -425,6 +499,7 @@ module REPL
         s.prompt = "julia-shell> "
         s.indent = length(s.prompt)
         s.prompt_color = repl.shell_color
+        s.complete = ShellCompletionProvider(repl)
         repl.in_shell = true
         Readline.refresh_line(s)
     end
@@ -434,6 +509,9 @@ module REPL
             s.prompt = "julia> "
             s.indent = length(s.prompt)
             s.prompt_color = repl.prompt_color
+            if !isa(s.complete,REPLCompletionProvider)
+                s.complete = REPLCompletionProvider(repl)
+            end
             repl.in_shell = false
             repl.in_help = false
             Readline.refresh_line(s)
