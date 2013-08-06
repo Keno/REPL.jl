@@ -223,7 +223,7 @@ module REPL
     function completions(string,pos)
         startpos = pos
         dotpos = 0
-        while startpos > 0
+        while startpos > 1
             c = string[startpos]
             if c < 0x80 && contains(non_word_chars,char(c)) 
                 if c != '.'
@@ -242,28 +242,9 @@ module REPL
     end
 
     function completeLine(c::REPLCompletionProvider,s)
-        # Find beginning of "A.B.C" expression
-        prev_pos = position(s.input_buffer)
-        dotpos = 0
-        while true
-            char_move_word_left(s)
-            dotpos = position(s.input_buffer)
-            if position(s.input_buffer) == 0 || (s.input_buffer.data[position(s.input_buffer)]!='.')
-                break
-            else 
-                char_move_left(s)
-            end
-        end
-        # prev_pos not prev_pos+1 since prev_pos is at the position past the 
-        # last character we want to consider for completion
-        if s.input_buffer.size == 0 
-            partial = "" 
-        else 
-            partial = bytestring(s.input_buffer.data[(position(s.input_buffer)+1):(prev_pos)])
-        end
-        ret = complete_symbol(partial)
-        seek(s.input_buffer,prev_pos)
-        return (ret,bytestring(s.input_buffer.data[(dotpos+1):(prev_pos)]))
+        partial = bytestring(s.input_buffer.data[1:position(s.input_buffer)])
+        ret, range, matched = completions(partial,endof(partial))
+        return (ret,matched)
     end
 
     type ShellCompleteString <: String
