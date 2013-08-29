@@ -70,41 +70,49 @@ module REPL
     function display_error(io::IO, er, bt)
         Base.with_output_color(:red, io) do io
             print(io, "ERROR: ")
-            Base.error_show(io, er, bt)
+            Base.showerror(io, er, bt)
         end
     end
 
-    function print_repsonse(io::IO,r::AbstractREPL,val::ANY, bt, show_value, have_color)
+    import Base: Display, display, writemime
+
+    immutable REPLDisplay <: Display
+        repl::AbstractREPL
+    end
+    function display(d::REPLDisplay, ::MIME"text/plain", x)
+        io = outstream(d.repl)
+        write(io,answer_color(d.repl))
+        writemime(io, MIME("text/plain"), x)
+        println(io)
+    end
+    display(d::REPLDisplay, x) = display(d, MIME("text/plain"), x)
+
+    function print_response(d::REPLDisplay,errio::IO,r::AbstractREPL,val::ANY, bt, show_value, have_color)
         while true
             try
                 if !is(bt,nothing)
-                    display_error(io,val,bt)
-                    println(io)
+                    display_error(errio,val,bt)
+                    println(errio)
                     iserr, lasterr = false, ()
                 else
                     if !is(val,nothing) && show_value
-                        if have_color
-                            print(io,answer_color(r))
-                        end
-                        try repl_show(io,val)
+                        try display(d,val)
                         catch err
-                            println(io,"Error showing value of type ", typeof(val), ":")
+                            println(errio,"Error showing value of type ", typeof(val), ":")
                             rethrow(err)
                         end
-                        println(io)
                     end
                 end
                 break
             catch err
                 if !is(bt,nothing)
-                    println(io,"SYSTEM: show(lasterr) caused an error")
+                    println(errio,"SYSTEM: show(lasterr) caused an error")
                     break
                 end
                 val = err
                 bt = catch_backtrace()
             end
         end
-        println(io)
     end
 
     using Terminals
@@ -123,6 +131,7 @@ module REPL
         in_help::Bool
         consecutive_returns
     end
+    outstream(r::ReadlineREPL) = r.t
 
     ReadlineREPL(t::TextTerminal) =  ReadlineREPL(t,julia_green,Base.text_colors[:white],Base.answer_color(),Base.text_colors[:red],Base.text_colors[:yellow],false,false,0)
 
@@ -351,12 +360,14 @@ module REPL
     function run_frontend(repl::ReadlineREPL,repl_channel,response_channel)
         f = open(find_hist_file(),true,true,true,false,false)
         have_color = true
+        d = REPLDisplay(repl)
         try 
             hp = hist_from_file(f)
             print(repl.t,have_color ? Base.banner_color : Base.banner_plain)
             while true
                 have_color = true
                 history_reset_state(hp)
+                println(repl.t)
                 buf, ok = Readline.prompt!(repl.t,"julia> ";
                     prompt_color=repl.prompt_color,
                     input_color=repl.input_color,
@@ -384,15 +395,13 @@ module REPL
                     end
                     put(repl_channel, (ast,1))
                     (val, bt) = take(response_channel)
-                    print_repsonse(repl,val,bt,true,have_color)
+                    print_response(d,val,bt,true,have_color)
                 end
             end
         finally
             close(f)
         end
     end
-
-
 
     function run_repl(t::TextTerminal)
         repl_channel = RemoteRef()
@@ -404,6 +413,8 @@ module REPL
     type BasicREPL <: AbstractREPL
     end
 
+    outstream(::BasicREPL) = STDOUT
+
     type StreamREPL <: AbstractREPL
         stream::IO
         prompt_color::String
@@ -411,14 +422,19 @@ module REPL
         answer_color::String
     end
 
+    import Base.AsyncStream
+
+    outstream(s::StreamREPL) = s.stream
+
     StreamREPL(stream::AsyncStream) = StreamREPL(stream,julia_green,Base.text_colors[:white],Base.answer_color())
 
     answer_color(r::ReadlineREPL) = r.answer_color
     answer_color(r::StreamREPL) = r.answer_color
     answer_color(::BasicREPL) = Base.text_colors[:white]
 
-    print_repsonse(r::StreamREPL,args...) = print_repsonse(r.stream,r, args...)
-    print_repsonse(r::ReadlineREPL,args...) = print_repsonse(r.t,r, args...)
+    print_response(d::REPLDisplay,r::StreamREPL,args...) = print_response(d, r.stream,r, args...)
+    print_response(d::REPLDisplay,r::ReadlineREPL,args...) = print_response(d, r.t, r, args...)
+    print_response(d::REPLDisplay,args...) = print_response(d,d.repl,args...)
 
     function run_repl(stream::AsyncStream)
     repl = 
@@ -434,6 +450,7 @@ module REPL
     function run_frontend(repl::StreamREPL,repl_channel,response_channel)
         have_color = true
         print(repl.stream,have_color ? Base.banner_color : Base.banner_plain)
+        d = REPLDisplay(repl)
         while repl.stream.open
             if have_color
                 print(repl.stream,repl.prompt_color)
@@ -450,7 +467,7 @@ module REPL
                 end
                 put(repl_channel, (ast,1))
                 (val, bt) = take(response_channel)
-                print_repsonse(repl,val,bt,true,have_color)
+                print_response(d,val,bt,true,have_color)
             end
         end
         # Terminate Backend
