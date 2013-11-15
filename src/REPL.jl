@@ -55,6 +55,10 @@ module REPL
     function start_repl_backend(repl_channel, response_channel)
         backend = REPLBackend(repl_channel,response_channel,nothing)
         @async begin
+            # include looks at this to determine the relative include path
+            # nothing means cwd
+            tls = task_local_storage()
+            tls[:SOURCE_PATH] = nothing
             while true
                 (ast,show_value) = take(backend.repl_channel)
                 if show_value == -1
