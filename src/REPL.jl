@@ -197,14 +197,14 @@ module REPL
 
     function history_adjust(hist::REPLHistoryProvider,s)
         if 0 < hist.cur_idx <= length(hist.history)
-            hist.history[hist.cur_idx] = bytestring(pointer(s.input_buffer.data),s.input_buffer.ptr-1)
+            hist.history[hist.cur_idx] = Readline.input_string(s)
         end
     end
 
     function history_prev(hist::REPLHistoryProvider,s)
         if hist.cur_idx > 1
             if hist.cur_idx == length(hist.history)+1
-                hist.last_buffer = copy(s.input_buffer)
+                hist.last_buffer = copy(Readline.buffer(s))
             else
                 history_adjust(hist,s)
             end
@@ -230,7 +230,7 @@ module REPL
         end
     end
 
-    function history_search(hist::REPLHistoryProvider,s,query_buffer::IOBuffer,response_buffer::IOBuffer,backwards::Bool=false, skip_current::Bool=false)
+    function history_search(hist::REPLHistoryProvider,query_buffer::IOBuffer,response_buffer::IOBuffer,backwards::Bool=false, skip_current::Bool=false)
         if !(query_buffer.ptr > 1)
             #truncate(response_buffer,0)
             return true
@@ -278,9 +278,9 @@ module REPL
             end
         end
         if found
-            if hist.cur_idx == length(hist.history)+1
-                hist.last_buffer = copy(s.input_buffer)
-            end
+            #if hist.cur_idx == length(hist.history)+1
+            #    hist.last_buffer = copy(s.input_buffer)
+            #end
             hist.cur_idx = idx
         end
         return found
@@ -289,6 +289,7 @@ module REPL
     function history_reset_state(hist::REPLHistoryProvider)
         hist.cur_idx = length(hist.history)+1
     end
+    Readline.reset_state(hist::REPLHistoryProvider) = history_reset_state(hist)
 
     const julia_green = "\033[1m\033[32m"
     const color_normal = Base.color_normal
@@ -319,98 +320,156 @@ module REPL
         end
     end
 
-
-    function enter_julia_help(s,repl)
-        s.prompt = "julia-help> "
-        s.indent = length(s.prompt)
-        s.prompt_color = repl.help_color
-        repl.in_help = true
-        Readline.refresh_line(s)
+    function send_to_backend(ast,req,rep)
+        put(req, (ast,1))
+        (val, bt) = take(rep)
     end
 
-    function enter_julia_shell(s,repl)
-        s.prompt = "julia-shell> "
-        s.indent = length(s.prompt)
-        s.prompt_color = repl.shell_color
-        s.complete = ShellCompletionProvider(repl)
-        repl.in_shell = true
-        Readline.refresh_line(s)
-    end
+    have_color(s) = true
 
-    function special_backspace(s,repl)
-        if (repl.in_shell || repl.in_help) && s.input_buffer.size == 0
-            s.prompt = "julia> "
-            s.indent = length(s.prompt)
-            s.prompt_color = repl.prompt_color
-            if !isa(s.complete,REPLCompletionProvider)
-                s.complete = REPLCompletionProvider(repl)
+    function respond(f,d,main,req,rep)
+        (s,buf,ok)->begin
+            if !ok
+                return transition(s,:abort)
             end
-            repl.in_shell = false
-            repl.in_help = false
-            Readline.refresh_line(s)
-        else
-            Readline.edit_backspace(s) 
+            line = takebuf_string(buf)
+            if !isempty(line)
+                reset(d)
+                (val,bt) = send_to_backend(f(line),req,rep)
+                print_response(d,val,bt,true,have_color(s))
+            end
+            println(d.repl.t)
+            reset_state(s)
+            transition(s,main)
         end
     end
 
-    const repl_keymap = {
-        ';' => :( !data.in_shell && !data.in_help && s.input_buffer.size == 0 ? enter_julia_shell(s,data) : Readline.edit_insert(s,';') ),
-        '?' => :( !data.in_shell && !data.in_help && s.input_buffer.size == 0 ? enter_julia_help(s,data) : Readline.edit_insert(s,'?') ),
-        '\b' => :(special_backspace(s,data))
-    }
+    import Terminals: raw!
 
-    @eval @Readline.keymap repl_keymap_func $([repl_keymap, Readline.default_keymap,Readline.escape_defaults])
+    function reset(d::REPLDisplay)
+        raw!(d.repl.t,false)
+        print(Base.text_colors[:normal])
+    end
 
-    function run_frontend(repl::ReadlineREPL,repl_channel,response_channel)
+    function setup_interface(d::REPLDisplay,req,rep;extra_repl_keymap=Dict{Any,Any}[])
+        ###
+        #
+        # This function returns the main interface that describes the REPL 
+        # functionality, it is called internally by functions that setup a 
+        # Terminal-based REPL frontend, but if you want to customize your REPL
+        # or embed the REPL in another interface, you may call this function 
+        # directly and append it to your interface. 
+        #   
+        # Usage:
+        #
+        # repl_channel,response_channel = RemoteRef(),RemoteRef()
+        # start_repl_backend(repl_channel, response_channel)
+        # setup_interface(REPLDisplay(t),repl_channel,response_channel)
+        #
+        ###
+
+        ###
+        # We setup the interface in two stages.
+        # First, we set up all components (prompt,rsearch,shell,help)
+        # Second, we create keymaps with appropriate transitions between them 
+        #   and assign them to the components
+        #
+        ###
+
+        ############################### Stage I ################################
+
+        repl = d.repl
+
+        # We will have a unified history for all REPL modes
         f = open(find_hist_file(),true,true,true,false,false)
-        have_color = true
-        d = REPLDisplay(repl)
-        try 
-            hp = hist_from_file(f)
-            print(repl.t,have_color ? Base.banner_color : Base.banner_plain)
-            while true
-                have_color = true
-                history_reset_state(hp)
-                println(repl.t)
-                buf, ok = Readline.prompt!(repl.t,"julia> ";
-                    prompt_color=repl.prompt_color,
-                    input_color=repl.input_color,
-                    hist=hp,
-                    keymap_func = repl_keymap_func,
-                    keymap_func_data = repl,
-                    complete=REPLCompletionProvider(repl),
-                    on_enter=s->return_callback(repl,s))
-                if !ok
-                    break
-                end
-                line = takebuf_string(buf)
-                if !isempty(line)
-                    if repl.in_shell
-                        ast = Expr(:call, :(Base.repl_cmd), macroexpand(Expr(:macrocall,symbol("@cmd"),line)))
-                    elseif repl.in_help
-                        ast = Expr(:call, :(Base.help), line)
-                    else
-                        ast = Base.parse_input_line(line)
-                    end
-                    repl.in_shell = false
-                    repl.in_help = false
-                    if have_color
-                        print(repl.t,color_normal)
-                    end
-                    put(repl_channel, (ast,1))
-                    (val, bt) = take(response_channel)
-                    print_response(d,val,bt,true,have_color)
-                end
-            end
-        finally
-            close(f)
+        hp = hist_from_file(f)
+        history_reset_state(hp)
+
+        # This will provide completions for REPL and help mode
+        replc = REPLCompletionProvider(repl)
+        finalizer(replc,(replc)->close(f))
+
+        (hkp,hkeymap) = Readline.setup_search_keymap(hp)
+
+        # Set up the main Julia prompt
+        main_prompt = Prompt("julia> ";
+            # Copy colors from the prompt object
+            prompt_color=repl.prompt_color,
+            input_color=repl.input_color,
+            # History provider
+            hist=hp,
+            keymap_func_data = repl,
+            complete=replc,
+            on_enter=s->return_callback(repl,s))
+
+        main_prompt.on_done = respond(Base.parse_input_line,d,main_prompt,req,rep)
+
+        # Setup help mode
+        help_mode = Prompt("julia-help> ",
+            prompt_color = repl.help_color,
+            input_color=repl.input_color,
+            keymap_func_data = repl,
+            complete = replc,
+            on_enter=s->return_callback(repl,s),
+            # When we're done transform the entered line into a call to help("$line")
+            on_done = respond(d,main_prompt,req,rep) do line
+                Expr(:call, :(Base.help), line)
+            end)
+
+        # Set up shell mode
+        shell_mode = Prompt("julia-shell> ";
+            prompt_color = repl.shell_color,
+            input_color=repl.input_color,
+            hist = hp,
+            keymap_func_data = repl,
+            complete = ShellCompletionProvider(repl),
+            on_enter=s->return_callback(repl,s),
+            # Transform "foo bar baz" into `foo bar baz` (shell quoting)
+            # and pass into Base.repl_cmd for processing (handles `ls` and `cd`
+            # special)
+            on_done = respond(d,main_prompt,req,rep) do line
+                Expr(:call, :(Base.repl_cmd), macroexpand(Expr(:macrocall,symbol("@cmd"),line)))
+            end)
+
+        ################################# Stage II #############################
+
+        # Canoniczlize user keymap input
+        if isa(extra_repl_keymap,Dict)
+            extra_repl_keymap = [extra_repl_keymap]
         end
+
+
+        const repl_keymap = {
+            ';' => s->( isempty(s) ? transition(s,shell_mode) : edit_insert(s,';') ),
+            '?' => s->( isempty(s) ? transition(s,help_mode) : edit_insert(s,'?') )
+        }
+
+        a = Dict{Any,Any}[hkeymap, repl_keymap, Readline.history_keymap(hp), Readline.default_keymap,Readline.escape_defaults]
+        prepend!(a,extra_repl_keymap)
+        @eval @Readline.keymap repl_keymap_func $(a)
+
+        main_prompt.keymap_func = repl_keymap_func
+
+        const mode_keymap = {
+            '\b' => s->(isempty(s) ? transition(s,main_prompt) : Readline.edit_backspace(s) )
+        }
+
+        b = Dict{Any,Any}[hkeymap, mode_keymap, Readline.history_keymap(hp), Readline.default_keymap,Readline.escape_defaults]
+
+        @eval @Readline.keymap mode_keymap_func $(b)
+
+        shell_mode.keymap_func = help_mode.keymap_func = mode_keymap_func
+
+        ModalInterface([main_prompt,shell_mode,help_mode,hkp])
     end
+
+    run_frontend(repl::ReadlineREPL,repl_channel,response_channel) = run_interface(repl.t,setup_interface(REPLDisplay(repl),repl_channel,response_channel))
 
     function run_repl(t::TextTerminal)
         repl_channel = RemoteRef()
         response_channel = RemoteRef()
         start_repl_backend(repl_channel, response_channel)
+        print(t,Base.banner_color)
         run_frontend(ReadlineREPL(t),repl_channel,response_channel)
     end
 
