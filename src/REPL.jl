@@ -469,7 +469,7 @@ module REPL
         repl_channel = RemoteRef()
         response_channel = RemoteRef()
         start_repl_backend(repl_channel, response_channel)
-        print(t,Base.banner_color)
+        print(t,Base.banner())
         run_frontend(ReadlineREPL(t),repl_channel,response_channel)
     end
 
@@ -512,7 +512,7 @@ module REPL
 
     function run_frontend(repl::StreamREPL,repl_channel,response_channel)
         have_color = true
-        print(repl.stream,have_color ? Base.banner_color : Base.banner_plain)
+        print(repl.stream,Base.banner())
         d = REPLDisplay(repl)
         while repl.stream.open
             if have_color
