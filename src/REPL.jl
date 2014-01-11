@@ -252,10 +252,8 @@ module REPL
                 response_buffer.ptr + 1 < response_buffer.size ? 
                 search(bytestring(response_buffer.data[1:response_buffer.size]),searchdata,response_buffer.ptr + 1): 0:-1
 
-        #println("\n",match)
-
         if match != 0:-1
-            seek(response_buffer,first(match))
+            seek(response_buffer,first(match)-1)
             return true
         end
 
@@ -273,7 +271,7 @@ module REPL
                 found = true
                 truncate(response_buffer,0)
                 write(response_buffer,hist.history[idx])
-                seek(response_buffer,first(match))
+                seek(response_buffer,first(match)-1)
                 break
             end
         end
