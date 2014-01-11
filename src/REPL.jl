@@ -465,11 +465,18 @@ module REPL
 
     run_frontend(repl::ReadlineREPL,repl_channel,response_channel) = run_interface(repl.t,setup_interface(REPLDisplay(repl),repl_channel,response_channel))
 
+    if isdefined(Base,:banner_color)
+        banner(io,t) = banner(io,hascolor(t))
+        banner(io,x::Bool) = print(io,x ? Base.banner_color : Base.banner_plain)
+    else
+        banner(io,t) = Base.banner(io)
+    end
+
     function run_repl(t::TextTerminal)
         repl_channel = RemoteRef()
         response_channel = RemoteRef()
         start_repl_backend(repl_channel, response_channel)
-        print(t,Base.banner())
+        banner(t,t)
         run_frontend(ReadlineREPL(t),repl_channel,response_channel)
     end
 
@@ -510,9 +517,11 @@ module REPL
     repl
     end
 
+
+
     function run_frontend(repl::StreamREPL,repl_channel,response_channel)
         have_color = true
-        print(repl.stream,Base.banner())
+        banner(repl.stream,have_color)
         d = REPLDisplay(repl)
         while repl.stream.open
             if have_color

@@ -33,6 +33,6 @@ if repl
     end
 end
 if Base.have_color
-    print(color_normal)
+    print(Base.color_normal)
 end
 quit()
