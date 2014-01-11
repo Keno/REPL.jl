@@ -469,7 +469,7 @@ module REPL
         repl_channel = RemoteRef()
         response_channel = RemoteRef()
         start_repl_backend(repl_channel, response_channel)
-        print(t,Base.banner_color)
+        print(t,Base.banner())
         run_frontend(ReadlineREPL(t),repl_channel,response_channel)
     end
 
