@@ -240,7 +240,7 @@ module REPL
         searchdata = bytestring(query_buffer.data[1:(query_buffer.ptr-1)])
         pos = position(response_buffer)
         if !skip_current && !((response_buffer.size == 0) || (pos+query_buffer.ptr-2 == 0)) && 
-            (response_buffer.size >= (pos+query_buffer.ptr-2)) &&
+            (response_buffer.size >= (pos+query_buffer.ptr-2)) && (pos != 0) &&
             (searchdata == bytestring(response_buffer.data[pos:(pos+query_buffer.ptr-2)]))
             return true
         end
