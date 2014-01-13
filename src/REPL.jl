@@ -334,7 +334,9 @@ module REPL
             if !isempty(line)
                 reset(d)
                 (val,bt) = send_to_backend(f(line),req,rep)
-                print_response(d,val,bt,true,have_color(s))
+                if !ends_with_semicolon(line)
+                    print_response(d,val,bt,true,have_color(s))
+                end
             end
             println(d.repl.t)
             reset_state(s)
@@ -515,7 +517,18 @@ module REPL
     repl
     end
 
-
+    function ends_with_semicolon(line)
+        match = rsearch(line,';') 
+        if match != 0
+            for c in line[(match+1):end]
+                if !isspace(c)
+                    return c == '#'
+                end
+            end
+            return true
+        end
+        return false
+    end
 
     function run_frontend(repl::StreamREPL,repl_channel,response_channel)
         have_color = true
@@ -537,7 +550,9 @@ module REPL
                 end
                 put(repl_channel, (ast,1))
                 (val, bt) = take(response_channel)
-                print_response(d,val,bt,true,have_color)
+                if !ends_with_semicolon(line)
+                    print_response(d,val,bt,true,have_color)
+                end
             end
         end
         # Terminate Backend
