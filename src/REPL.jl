@@ -137,7 +137,7 @@ module REPL
     end
     outstream(r::ReadlineREPL) = r.t
 
-    ReadlineREPL(t::TextTerminal) =  ReadlineREPL(t,julia_green,Base.text_colors[:white],Base.answer_color(),Base.text_colors[:red],Base.text_colors[:yellow],false,false,0)
+    ReadlineREPL(t::TextTerminal) =  ReadlineREPL(t,julia_green,Base.input_color(),Base.answer_color(),Base.text_colors[:red],Base.text_colors[:yellow],false,false,0)
 
     type REPLCompletionProvider <: CompletionProvider
         r::ReadlineREPL
