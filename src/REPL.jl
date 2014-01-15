@@ -405,7 +405,7 @@ module REPL
         main_prompt.on_done = respond(Base.parse_input_line,d,main_prompt,req,rep)
 
         # Setup help mode
-        help_mode = Prompt("julia-help> ",
+        help_mode = Prompt("help> ",
             prompt_color = repl.help_color,
             input_color=repl.input_color,
             keymap_func_data = repl,
@@ -417,7 +417,7 @@ module REPL
             end)
 
         # Set up shell mode
-        shell_mode = Prompt("julia-shell> ";
+        shell_mode = Prompt("shell> ";
             prompt_color = repl.shell_color,
             input_color=repl.input_color,
             hist = hp,
