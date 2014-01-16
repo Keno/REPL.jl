@@ -440,8 +440,26 @@ module REPL
 
 
         const repl_keymap = {
-            ';' => s->( isempty(s) ? transition(s,shell_mode) : edit_insert(s,';') ),
-            '?' => s->( isempty(s) ? transition(s,help_mode) : edit_insert(s,'?') )
+            ';' => function (s)
+                if isempty(s) || position(Readline.buffer(s)) == 0
+                    buf = copy(Readline.buffer(s))
+                    transition(s,shell_mode)
+                    Readline.state(s,shell_mode).input_buffer = buf
+                    Readline.refresh_line(s)
+                else
+                    edit_insert(s,';')
+                end
+            end,
+            '?' => function (s)
+                if isempty(s) || position(Readline.buffer(s)) == 0
+                    buf = copy(Readline.buffer(s))
+                    transition(s,help_mode)
+                    Readline.state(s,help_mode).input_buffer = buf
+                    Readline.refresh_line(s)
+                else
+                    edit_insert(s,'?')
+                end
+            end
         }
 
         a = Dict{Any,Any}[hkeymap, repl_keymap, Readline.history_keymap(hp), Readline.default_keymap,Readline.escape_defaults]
