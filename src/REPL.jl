@@ -169,19 +169,41 @@ module REPL
         history_file
         cur_idx::Int
         last_buffer::IOBuffer
+        last_mode
+        mode_mapping
+        modes::Array{Uint8,1}
     end
 
-    function hist_from_file(file)
-        hp = REPLHistoryProvider(String[],file,0,IOBuffer())
+    function hist_from_file(file,mode_mapping)
+        hp = REPLHistoryProvider(String[],file,0,IOBuffer(),nothing,mode_mapping,Uint8[])
         seek(file,0)
         while !eof(file)
             b = readuntil(file,'\0')
-            push!(hp.history,b[1:(end-1)]) # Strip trailing \0
+            if uint8(b[1]) in keys(mode_mapping)
+                push!(hp.modes,uint8(b[1]))
+                push!(hp.history,b[2:(end-1)]) # Strip trailing \0
+            else # For history backward compatibility 
+                push!(hp.modes,0)
+                push!(hp.history,b[1:(end-1)]) # Strip trailing \0
+            end
         end
         seekend(file)
         hp
     end
 
+    function mode_idx(hist::REPLHistoryProvider,mode)
+        c::Uint8 = 0
+        for (k,v) in hist.mode_mapping
+            if k == uint8('\0')
+                continue
+            elseif v == mode
+                c = k
+                break
+            end
+        end
+        @assert c != 0
+        return c
+    end
 
     function add_history(hist::REPLHistoryProvider,s)
         # bytestring copies
@@ -190,6 +212,9 @@ module REPL
             return
         end
         push!(hist.history,str)
+        c = mode_idx(hist,Readline.mode(s))
+        push!(hist.modes,c)
+        write(hist.history_file,c)
         write(hist.history_file,str)
         write(hist.history_file,'\0')
         flush(hist.history_file)
@@ -198,35 +223,43 @@ module REPL
     function history_adjust(hist::REPLHistoryProvider,s)
         if 0 < hist.cur_idx <= length(hist.history)
             hist.history[hist.cur_idx] = Readline.input_string(s)
+            hist.modes[hist.cur_idx] = mode_idx(hist,Readline.mode(s))
         end
     end
 
-    function history_prev(hist::REPLHistoryProvider,s)
+    function history_prev(s::Readline.MIState,hist::REPLHistoryProvider)
         if hist.cur_idx > 1
             if hist.cur_idx == length(hist.history)+1
+                hist.last_mode = Readline.mode(s)
                 hist.last_buffer = copy(Readline.buffer(s))
             else
                 history_adjust(hist,s)
             end
             hist.cur_idx-=1
-            return (hist.history[hist.cur_idx],true)
+            Readline.transition(s,hist.mode_mapping[hist.modes[hist.cur_idx]])
+            Readline.replace_line(s,hist.history[hist.cur_idx])
+            Readline.refresh_line(s)
         else
-            return ("",false)
+            Terminals.beep(Readline.terminal(s))
         end
     end
 
-    function history_next(hist::REPLHistoryProvider,s)
+    function history_next(s::Readline.MIState,hist::REPLHistoryProvider)
         if hist.cur_idx < length(hist.history)
             history_adjust(hist,s)
             hist.cur_idx+=1
-            return (hist.history[hist.cur_idx],true)
+            Readline.transition(s,hist.mode_mapping[hist.modes[hist.cur_idx]])
+            Readline.replace_line(s,hist.history[hist.cur_idx])
+            Readline.refresh_line(s)
         elseif hist.cur_idx == length(hist.history)
             hist.cur_idx+=1
             buf = hist.last_buffer
             hist.last_buffer = IOBuffer()
-            return (buf,true)
+            Readline.transition(s,hist.last_mode)
+            Readline.replace_line(s,buf)
+            Readline.refresh_line(s)
         else
-            return ("",false)
+            Terminals.beep(Readline.terminal(s))
         end
     end
 
@@ -380,24 +413,15 @@ module REPL
 
         repl = d.repl
 
-        # We will have a unified history for all REPL modes
-        f = open(find_hist_file(),true,true,true,false,false)
-        hp = hist_from_file(f)
-        history_reset_state(hp)
-
         # This will provide completions for REPL and help mode
         replc = REPLCompletionProvider(repl)
         finalizer(replc,(replc)->close(f))
-
-        (hkp,hkeymap) = Readline.setup_search_keymap(hp)
 
         # Set up the main Julia prompt
         main_prompt = Prompt("julia> ";
             # Copy colors from the prompt object
             prompt_color=repl.prompt_color,
             input_color=repl.input_color,
-            # History provider
-            hist=hp,
             keymap_func_data = repl,
             complete=replc,
             on_enter=s->return_callback(repl,s))
@@ -419,7 +443,6 @@ module REPL
         shell_mode = Prompt("shell> ";
             prompt_color = repl.shell_color,
             input_color=repl.input_color,
-            hist = hp,
             keymap_func_data = repl,
             complete = ShellCompletionProvider(repl),
             # Transform "foo bar baz" into `foo bar baz` (shell quoting)
@@ -430,6 +453,17 @@ module REPL
             end)
 
         ################################# Stage II #############################
+
+        # Setup history 
+        # We will have a unified history for all REPL modes
+        f = open(find_hist_file(),true,true,true,false,false)
+        hp = hist_from_file(f,(Uint8=>Any)[uint8('\0') => main_prompt, uint8(';') => shell_mode, uint8('?') => help_mode, uint8('>') => main_prompt])
+        history_reset_state(hp)
+        main_prompt.hist = hp
+        shell_mode.hist = hp
+        help_mode.hist = hp
+
+        (hkp,hkeymap) = Readline.setup_search_keymap(hp)
 
         # Canoniczlize user keymap input
         if isa(extra_repl_keymap,Dict)
