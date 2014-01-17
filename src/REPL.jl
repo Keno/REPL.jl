@@ -410,7 +410,6 @@ module REPL
             input_color=repl.input_color,
             keymap_func_data = repl,
             complete = replc,
-            on_enter=s->return_callback(repl,s),
             # When we're done transform the entered line into a call to help("$line")
             on_done = respond(d,main_prompt,req,rep) do line
                 Expr(:call, :(Base.help), line)
@@ -423,7 +422,6 @@ module REPL
             hist = hp,
             keymap_func_data = repl,
             complete = ShellCompletionProvider(repl),
-            on_enter=s->return_callback(repl,s),
             # Transform "foo bar baz" into `foo bar baz` (shell quoting)
             # and pass into Base.repl_cmd for processing (handles `ls` and `cd`
             # special)
