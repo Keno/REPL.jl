@@ -1,5 +1,11 @@
 module REPL
 
+    # compatibility for julia version 0.2
+    if !isdefined(:put!)
+        const put! = put
+        const take! = take
+    end
+
     export StreamREPL, BasicREPL
 
     abstract AbstractREPL
