@@ -1,5 +1,11 @@
 module REPL
 
+    # compatibility for julia version 0.2
+    if !isdefined(:put!)
+        const put! = put
+        const take! = take
+    end
+
     export StreamREPL, BasicREPL
 
     abstract AbstractREPL
@@ -17,7 +23,7 @@ module REPL
         while true
             try
                 if iserr
-                    put(backend.response_channel,(lasterr,bt))
+                    put!(backend.response_channel,(lasterr,bt))
                     iserr, lasterr = false, ()
                 else
                     ast = expand(ast)
@@ -25,7 +31,7 @@ module REPL
                     eval(Main,:(ans=$(ans)))
                     value = eval(Main,ast)
                     backend.ans = value
-                    put(backend.response_channel,(value,nothing))
+                    put!(backend.response_channel,(value,nothing))
                 end
                 break
             catch err
@@ -60,7 +66,7 @@ module REPL
             tls = task_local_storage()
             tls[:SOURCE_PATH] = nothing
             while true
-                (ast,show_value) = take(backend.repl_channel)
+                (ast,show_value) = take!(backend.repl_channel)
                 if show_value == -1
                     # exit flag
                     break
@@ -352,8 +358,8 @@ module REPL
     end
 
     function send_to_backend(ast,req,rep)
-        put(req, (ast,1))
-        (val, bt) = take(rep)
+        put!(req, (ast,1))
+        (val, bt) = take!(rep)
     end
 
     have_color(s) = true
@@ -598,15 +604,15 @@ module REPL
                 if have_color
                     print(repl.stream,color_normal)
                 end
-                put(repl_channel, (ast,1))
-                (val, bt) = take(response_channel)
+                put!(repl_channel, (ast,1))
+                (val, bt) = take!(response_channel)
                 if !ends_with_semicolon(line)
                     print_response(d,val,bt,true,have_color)
                 end
             end
         end
         # Terminate Backend
-        put(repl_channel,(nothing,-1))    
+        put!(repl_channel,(nothing,-1))    
     end
 
     function start_repl_server(port)
