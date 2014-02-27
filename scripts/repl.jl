@@ -1,6 +1,7 @@
 using REPL
 using Terminals
 
+ccall(:jl_install_sigint_handler, Void, ())
 
 (quiet,repl,startup,color_set,history) = Base.process_options(ARGS)
 
