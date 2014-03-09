@@ -63,9 +63,9 @@ module REPL
         @async begin
             # include looks at this to determine the relative include path
             # nothing means cwd
-            tls = task_local_storage()
-            tls[:SOURCE_PATH] = nothing
             while true
+                tls = task_local_storage()
+                tls[:SOURCE_PATH] = nothing
                 (ast,show_value) = take!(backend.repl_channel)
                 if show_value == -1
                     # exit flag
