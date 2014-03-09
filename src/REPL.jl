@@ -390,6 +390,8 @@ module REPL
         print(Base.text_colors[:normal])
     end
 
+
+
     function setup_interface(d::REPLDisplay,req,rep;extra_repl_keymap=Dict{Any,Any}[])
         ###
         #
@@ -497,7 +499,42 @@ module REPL
                 else
                     edit_insert(s,'?')
                 end
-            end
+            end,
+
+            # Bracketed Paste Mode
+            "\e[200~" => s->begin
+                ps = Readline.state(s,Readline.mode(s))
+                input = readuntil(ps.terminal,"\e[201~")[1:(end-6)]
+                input = replace(input,'\r','\n')
+                if position(Readline.buffer(s)) == 0
+                    indent = Base.indentation(input)[1]
+                    input = Base.unindent(input[(indent+1):end],indent)
+                end
+                buf = copy(Readline.buffer(s))
+                edit_insert(buf,input)
+                string = takebuf_string(buf)
+                pos = 0
+                while pos <= length(string)
+                    oldpos = pos
+                    ast, pos = Base.parse(string,pos; )
+                    # Get the line and strip leading and trailing whitespace
+                    line = strip(string[max(oldpos,1):min(pos-1,length(string))])
+                    Readline.replace_line(s,line)
+                    Readline.refresh_line(s)
+                    if !isa(ast,Expr) || (ast.head != :continue && ast.head != :incomplete)
+                        Readline.commit_line(s)
+                        # This is slightly ugly but ok for now
+                        terminal = Readline.terminal(s)
+                        stop_reading(terminal)
+                        raw!(terminal,false) && Terminals.Unix.disable_bracketed_paste(terminal)
+                        Readline.mode(s).on_done(s,Readline.buffer(s),true)
+                        raw!(terminal,true) && Terminals.Unix.enable_bracketed_paste(terminal)
+                        start_reading(terminal)
+                    else
+                        break
+                    end
+                end
+            end,
         }
 
         a = Dict{Any,Any}[hkeymap, repl_keymap, Readline.history_keymap(hp), Readline.default_keymap,Readline.escape_defaults]
