@@ -442,7 +442,7 @@ module REPL
             complete = replc,
             # When we're done transform the entered line into a call to help("$line")
             on_done = respond(d,main_prompt,req,rep) do line
-                Expr(:call, :(Base.help), line)
+                parse("Base.@help $line")
             end)
 
         # Set up shell mode
