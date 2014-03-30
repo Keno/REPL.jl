@@ -373,7 +373,7 @@ module REPL
             if !isempty(line)
                 reset(d)
                 (val,bt) = send_to_backend(f(line),req,rep)
-                if !ends_with_semicolon(line)
+                if !ends_with_semicolon(line) || !is(bt,nothing)
                     print_response(d,val,bt,true,have_color(s))
                 end
             end
